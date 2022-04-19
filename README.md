@@ -1,2 +1,8 @@
-# Reliability-
-Functions for reliability analysis and maintenance optimization
+# reliability
+Functions for reliability analysis and maintenance optimization. 
+
+# Dependencies
+- scipy
+- numpy
+- matplotlib
+- numdifftools
