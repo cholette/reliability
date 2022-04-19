@@ -11,27 +11,31 @@ class reliability_distribution(stats.rv_continuous):
         # self = stats.rv_continuous.__init__(self,*args,**kwargs)
         super(reliability_distribution,self).__init__()
         self.a=0  # alter support from 0 to \infty (support is self.a <= x <= self.b)    
+    
     def reliability(self,x,*args,**kwargs):
         return self.sf(x,*args,**kwargs)
+    
     def log_reliability(self,x,*args,**kwargs):
         return self.logsf(x,*args,**kwargs)
+    
     def hazard(self,x,*args,**kwargs):
         return np.exp(self.logpdf(x,*args,**kwargs)-self.log_reliability(x,*args,**kwargs))
+   
     def conditional_reliability(self,tau,t0):
         return np.exp(self.log_reliability(t0+tau) - self.log_reliability(t0))
-    def fit(self,ti,p0,observed="all",bnds=None): # Overwriting scipy.stats fitting because it seems that it doesn't handle censoring
-        result = opt.minimize(self.nnlf,p0,args=(ti,observed),bounds=bnds)
-        p_hat = result.x
-
-        if bnds==None or np.all(result.x>1e-6): # Not on bounds. Calculate confidence intervals based on Hessian
-            H = ndt.Hessian(self.nnlf)(result.x,ti,observed)
-            Hi = np.linalg.inv(H)
-            s = np.sqrt(np.diag(Hi))
-            p_ci = p_hat + 1.96*np.array([-s,s])
-        else:
-            print("Warning: Parameter estimates are on the boundary. Confidence intervals cannot be obtained.")
-            p_ci = np.nan*np.ones((p_hat.shape[0],p_hat.shape[0]))
-        return p_hat, p_ci
+    
+    def fit(self,ti,p0,observed="all"): # Overwriting scipy.stats fitting because it seems that it doesn't handle censoring
+        y0 = self.transform_scale(p0,direction="forward")
+        obj = lambda x: self.nnlf(self.transform_scale(x),ti,observed)
+        result = opt.minimize(obj,y0)
+        y_hat = result.x
+        H = ndt.Hessian(obj)(result.x)
+        p_hat,p_cov = self.transform_scale(y_hat,likelihood_hessian=H,direction="inverse")
+        s = np.sqrt(np.diag(p_cov))
+        p_ci = p_hat + 1.96*np.array([-s,s])
+        
+        return p_hat, p_ci  
+    
     def fit_interval(self,ti,ins,p0,observed="all",bnds=None): # Overwriting scipy.stats fitting because it seems that it doesn't handle censoring
         result = opt.minimize(self.nnlf_interval,p0,args=(ti,ins,observed),bounds=bnds)
         p_hat = result.x
@@ -45,10 +49,22 @@ class reliability_distribution(stats.rv_continuous):
             print("Warning: Parameter estimates are on the boundary. Confidence intervals cannot be obtained.")
             p_ci = np.nan*np.ones((p_hat.shape[0],p_hat.shape[0]))
         return p_hat, p_ci   
-
+    
     def freeze(self, *args, **kwds):
         return reliability_distribution_frozen(self, *args, **kwds) # freeze using new reliabilty class, otherwise new functions won't be defined (e.g. reliability)
+    
+    def transform_scale(self,x,likelihood_hessian=None,direction="inverse"):
+        # define as unity transform unless overwritten
+        z = np.array(x)
 
+        if not isinstance(likelihood_hessian,np.ndarray): # can't use likelihood_hessian == None because it is an array if supplied
+            print("No valid Hessian supplied. Returning only parameter estimates")
+            return z
+        else:
+            J = np.eye((len(z),len(z)))
+            z_cov = np.linalg.inv( J.transpose() @ likelihood_hessian @ J ) 
+            return z,z_cov  
+        
 class reliability_distribution_frozen(stats._distn_infrastructure.rv_frozen):
     def reliability(self,x):
         return self.dist.sf(x,*self.args, **self.kwds)
@@ -90,10 +106,13 @@ class reliability_from_hazard(reliability_distribution):
         return 1-np.exp(-self.cumulative_hazard[:,1])
 
 class expdist(reliability_distribution):
+    
     def _pdf(self,t):
         return np.exp(-t)
+    
     def _cdf(self,t):
         return 1-np.exp(-t)
+    
     def nnlf(self,mu0,ti,observed="all"):
         loc = 0
         scale = mu0
@@ -106,6 +125,7 @@ class expdist(reliability_distribution):
             sum(self.logsf(ti[observed==0],loc,scale)) # deals with right censoring
         
         return -loglike
+    
     def fit(self,ti,observed="all",bnds=None):
         if observed == "all":
             r = len(ti)
@@ -119,16 +139,22 @@ class expdist(reliability_distribution):
         return p_hat, p_ci
         
 class weibull(reliability_distribution):
+   
     def _pdf(self,t,beta):
         return stats.distributions.weibull_min.pdf(t,beta)
+   
     def _cdf(self,t,beta):
         return stats.distributions.weibull_min.cdf(t,beta)
+    
     def _sf(self,t,beta):
         return stats.distributions.weibull_min.sf(t,beta)
+   
     def _logsf(self,t,beta):
         return stats.distributions.weibull_min.logsf(t,beta)
+   
     def _logpdf(self,t,beta):
         return stats.distributions.weibull_min.logpdf(t,beta)
+   
     def nnlf(self,p,ti,observed="all"):
         loc = 0
         eta = p[0]
@@ -142,6 +168,7 @@ class weibull(reliability_distribution):
             sum(self.log_reliability(ti[observed==0],beta,loc,eta)) # deals with right censoring
         
         return -loglike
+    
     def nnlf_interval(self,p,ti,ins,observed="all"):
         loc = 0
         eta = p[0]
@@ -157,6 +184,31 @@ class weibull(reliability_distribution):
         
         return -loglike
     
+    def transform_scale(self,x,likelihood_hessian=None,direction="inverse"):
+        # direction is either "forward" (to log-scaled space) or "inverse" (back to original scale)
+        x = np.array(x)
+        if direction == "inverse":
+            z = np.exp(x)
+        elif direction == "forward":
+            z = np.log(x)
+        else:
+            raise ValueError("Transformation direction not recognized.")
+
+        if not isinstance(likelihood_hessian,np.ndarray): # can't use likelihood_hessian == None because it is an array if supplied
+            # print("No valid Hessian supplied. Returning only parameter estimates")
+            return z
+        else:
+            #Jacobian for transformation. See Reparameterization at https://en.wikipedia.org/wiki/Fisher_information 
+            J = np.diag(np.exp(x))
+
+            if direction == "inverse":
+                Ji = np.linalg.inv(J)                            
+                z_cov = np.linalg.inv( Ji.transpose() @ likelihood_hessian @ Ji ) 
+            elif direction == "forward":
+                z_cov = np.linalg.inv( J.transpose() @ likelihood_hessian @ J ) 
+
+            return z,z_cov  
+
 def ecdf(ti,observed,pos="midpoint",plot=True):
     ti = np.array(ti)
     observed = np.array(observed)
