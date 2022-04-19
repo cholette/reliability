@@ -29,7 +29,7 @@ class reliability_distribution(stats.rv_continuous):
         obj = lambda x: self.nnlf(self.transform_scale(x),ti,observed)
         result = opt.minimize(obj,y0)
         y_hat = result.x
-        H = ndt.Hessian(obj)(result.x)
+        H = ndt.Hessian(obj)(y_hat)
         p_hat,p_cov = self.transform_scale(y_hat,likelihood_hessian=H,direction="inverse")
         s = np.sqrt(np.diag(p_cov))
         p_ci = p_hat + 1.96*np.array([-s,s])
@@ -37,18 +37,16 @@ class reliability_distribution(stats.rv_continuous):
         return p_hat, p_ci  
     
     def fit_interval(self,ti,ins,p0,observed="all",bnds=None): # Overwriting scipy.stats fitting because it seems that it doesn't handle censoring
-        result = opt.minimize(self.nnlf_interval,p0,args=(ti,ins,observed),bounds=bnds)
-        p_hat = result.x
+        y0 = self.transform_scale(p0,direction="forward")
+        obj = lambda x: self.nnlf_interval(self.transform_scale(x),ti,ins,observed)
+        result = opt.minimize(obj,y0)
+        y_hat = result.x
+        H = ndt.Hessian(obj)(y_hat)
+        p_hat,p_cov = self.transform_scale(y_hat,likelihood_hessian=H,direction="inverse")
+        s = np.sqrt(np.diag(p_cov))
+        p_ci = p_hat + 1.96*np.array([-s,s]) 
 
-        if bnds==None or np.all(result.x>1e-6): # Not on bounds. Calculate confidence intervals based on Hessian
-            H = ndt.Hessian(self.nnlf)(result.x,ti,observed)
-            Hi = np.linalg.inv(H)
-            s = np.sqrt(np.diag(Hi))
-            p_ci = p_hat + 1.96*np.array([-s,s])
-        else:
-            print("Warning: Parameter estimates are on the boundary. Confidence intervals cannot be obtained.")
-            p_ci = np.nan*np.ones((p_hat.shape[0],p_hat.shape[0]))
-        return p_hat, p_ci   
+        return p_hat, p_ci    
     
     def freeze(self, *args, **kwds):
         return reliability_distribution_frozen(self, *args, **kwds) # freeze using new reliabilty class, otherwise new functions won't be defined (e.g. reliability)
@@ -80,6 +78,7 @@ class reliability_from_hazard(reliability_distribution):
         self.hazard = h
         self.cumulative_hazard = None
         self = reliability_distribution.__init__(self,*args,**kwargs)
+    
     def integrate_hazard(self,t,verb=False):
         if verb:
             print("Integrating hazard ... ")
@@ -208,6 +207,17 @@ class weibull(reliability_distribution):
                 z_cov = np.linalg.inv( J.transpose() @ likelihood_hessian @ J ) 
 
             return z,z_cov  
+
+class poisson_process:
+    def __init__(self,fun):
+        self.intensity = fun
+    def cumulative_intensity(self,t1,t0=0):
+        return quad(self.intensity,t0,t1)[0]
+    def reliabilty(self,t,w):
+        return np.exp(-self.cumulative_intensity(w,t0=t))
+    def pdf(self,t,t_last=0):
+        w = t-t_last
+        return self.intensity(t)*self.reliabilty(w,t0=t_last)
 
 def ecdf(ti,observed,pos="midpoint",plot=True):
     ti = np.array(ti)
