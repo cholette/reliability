@@ -34,7 +34,7 @@ class reliability_distribution(stats.rv_continuous):
         s = np.sqrt(np.diag(p_cov))
         p_ci = p_hat + 1.96*np.array([-s,s])
         
-        return p_hat, p_ci  
+        return p_hat, p_ci.transpose()
     
     def fit_interval(self,ti,ins,p0,observed="all",bnds=None): # Overwriting scipy.stats fitting because it seems that it doesn't handle censoring
         y0 = self.transform_scale(p0,direction="forward")
@@ -46,22 +46,14 @@ class reliability_distribution(stats.rv_continuous):
         s = np.sqrt(np.diag(p_cov))
         p_ci = p_hat + 1.96*np.array([-s,s]) 
 
-        return p_hat, p_ci    
+        return p_hat, p_ci.transpose()    
     
     def freeze(self, *args, **kwds):
         return reliability_distribution_frozen(self, *args, **kwds) # freeze using new reliabilty class, otherwise new functions won't be defined (e.g. reliability)
     
     def transform_scale(self,x,likelihood_hessian=None,direction="inverse"):
-        # define as unity transform unless overwritten
-        z = np.array(x)
-
-        if not isinstance(likelihood_hessian,np.ndarray): # can't use likelihood_hessian == None because it is an array if supplied
-            print("No valid Hessian supplied. Returning only parameter estimates")
-            return z
-        else:
-            J = np.eye((len(z),len(z)))
-            z_cov = np.linalg.inv( J.transpose() @ likelihood_hessian @ J ) 
-            return z,z_cov  
+         return _parameter_transform_identity(x,likelihood_hessian=likelihood_hessian,\
+            direction=direction)
         
 class reliability_distribution_frozen(stats._distn_infrastructure.rv_frozen):
     def reliability(self,x):
@@ -184,40 +176,131 @@ class weibull(reliability_distribution):
         return -loglike
     
     def transform_scale(self,x,likelihood_hessian=None,direction="inverse"):
-        # direction is either "forward" (to log-scaled space) or "inverse" (back to original scale)
-        x = np.array(x)
-        if direction == "inverse":
-            z = np.exp(x)
-        elif direction == "forward":
-            z = np.log(x)
-        else:
-            raise ValueError("Transformation direction not recognized.")
-
-        if not isinstance(likelihood_hessian,np.ndarray): # can't use likelihood_hessian == None because it is an array if supplied
-            # print("No valid Hessian supplied. Returning only parameter estimates")
-            return z
-        else:
-            #Jacobian for transformation. See Reparameterization at https://en.wikipedia.org/wiki/Fisher_information 
-            J = np.diag(np.exp(x))
-
-            if direction == "inverse":
-                Ji = np.linalg.inv(J)                            
-                z_cov = np.linalg.inv( Ji.transpose() @ likelihood_hessian @ Ji ) 
-            elif direction == "forward":
-                z_cov = np.linalg.inv( J.transpose() @ likelihood_hessian @ J ) 
-
-            return z,z_cov  
+        return _parameter_transform_log(x,likelihood_hessian=likelihood_hessian,\
+            direction=direction)
 
 class poisson_process:
-    def __init__(self,fun):
-        self.intensity = fun
+    def __init__(self,intensity_function,parameters):
+        self.parameters = parameters
+        self.intensity = intensity_function
+    
     def cumulative_intensity(self,t1,t0=0):
-        return quad(self.intensity,t0,t1)[0]
-    def reliabilty(self,t,w):
+        intensity = lambda t: self.intensity(t,*self.parameters)
+        return quad(intensity,t0,t1)[0]
+    
+    def log_intensity(self,t):
+        return np.log(self.intensity(t,*self.parameters))
+
+    def reliability(self,t,w):
         return np.exp(-self.cumulative_intensity(w,t0=t))
-    def pdf(self,t,t_last=0):
-        w = t-t_last
-        return self.intensity(t)*self.reliabilty(w,t0=t_last)
+    
+    def pdf(self,t,t_previous=0):
+        w = t-t_previous
+        return self.intensity(t,self.parameters)*\
+            self.reliability(w,t0=t_previous)
+    
+    def nnlf(self,p,event_times,truncation_times=None):
+        # event_times[asset][failure time index], truncation_time=None means that last index is a failure.
+
+        original_parameters = self.parameters
+        self.parameters = p
+
+        # turn into a list if tim is a numpy array. Lists are preferred
+        # since they can be ragged and have different numbers of event times. 
+        if isinstance(event_times,np.ndarray):
+            event_times = event_times.tolist()
+
+        # check for valid truncation time
+        if truncation_times != None:
+            for m in range(len(event_times)):
+                assert truncation_times[m] > max(event_times[m]), "Invalid truncation time for asset "+str(m)
+
+        like = 0
+        for m in range(len(event_times)): 
+            for f in event_times[m]:
+                like += self.log_intensity(f)
+        
+            if truncation_times[m] != None:
+                T = truncation_times[m]
+                like += -self.cumulative_intensity(T,t0=0)
+        
+        self.parameters = original_parameters
+        return -like
+
+    def fit(self,event_times,p0,truncation_times=None): # Overwriting scipy.stats fitting because it seems that it doesn't handle censoring
+        y0 = self.transform_scale(p0,direction="forward")
+        obj = lambda x: self.nnlf(self.transform_scale(x),event_times,truncation_times=truncation_times)
+        result = opt.minimize(obj,y0)
+        y_hat = result.x
+        H = ndt.Hessian(obj)(y_hat)
+        p_hat,p_cov = self.transform_scale(y_hat,likelihood_hessian=H,direction="inverse")
+        s = np.sqrt(np.diag(p_cov))
+        p_ci = p_hat + 1.96*np.array([-s,s])
+
+        return p_hat, p_ci.transpose()
+
+    def transform_scale(self,x,likelihood_hessian=None,direction="inverse"):
+         return _parameter_transform_log(x,likelihood_hessian=likelihood_hessian,\
+            direction=direction)
+
+class power_law_nhpp(poisson_process):
+    def __init__(self,a,b):
+        fun = lambda t: a*b*t**(b-1)
+        super().__init__(fun,parameters=[a,b])
+    
+    def cumulative_intensity(self, t1, t0=0):
+        a,b = [*self.parameters]
+        return a*(t1**b-t0**b)
+    
+    def log_intensity(self, t):
+        a,b = [*self.parameters]
+        return np.log(a)+np.log(b)+(b-1)*np.log(t)
+    
+    def fit(self,event_times,truncation_times=None):
+
+        # turn into a list if tim is a numpy array. Lists are preferred
+        # since they can be ragged and have different numbers of event times. 
+        if isinstance(event_times,np.ndarray):
+            event_times = event_times.tolist()
+
+        # check for valid truncation time
+        tau = []
+        if truncation_times != None:
+            for m in range(len(event_times)):
+                assert truncation_times[m] > max(event_times[m]), "Invalid truncation time for asset "+str(m)
+                tau.append(truncation_times[m])
+        else:
+            tau.append(max(event_times[m]))
+        
+        # analytical computation of MLE for observed failure times
+        num_failures = 0
+        den_beta_hat = 0
+        for n in range(len(event_times)):
+            failures = event_times[n]
+            num_failures += len(failures)
+            for k in range(len(failures)):
+                den_beta_hat += (np.log(tau[n])-np.log(failures[k]))
+        beta_hat = num_failures/den_beta_hat
+
+        sum_truncation_times = 0
+        for n in range(len(event_times)):
+            sum_truncation_times += tau[n]**beta_hat
+        alpha_hat = num_failures/sum_truncation_times
+        p_hat = [alpha_hat,beta_hat]
+
+        # lazy numerical computation of the Hessian and parameter CIs
+        y_hat = self.transform_scale(p_hat,direction='forward')
+        obj = lambda x: self.nnlf(self.transform_scale(x),event_times,truncation_times=truncation_times)
+        H = ndt.Hessian(obj)(y_hat)
+        _,p_cov = self.transform_scale(y_hat,likelihood_hessian=H,direction="inverse")
+        s = np.sqrt(np.diag(p_cov))
+        p_ci = p_hat + 1.96*np.array([-s,s])
+
+        return p_hat,p_ci.transpose()
+
+    def transform_scale(self,x,likelihood_hessian=None,direction="inverse"):
+        return _parameter_transform_log(x,likelihood_hessian=likelihood_hessian,\
+            direction=direction)
 
 def ecdf(ti,observed,pos="midpoint",plot=True):
     ti = np.array(ti)
@@ -302,3 +385,40 @@ def kaplan_meier(ti,observed,plot=True,confidence_interval="greenwood"):
         UB = 1-np.exp(-np.exp(cp))
 
     return uti,Fhat,LB,UB
+
+def _parameter_transform_log(x,likelihood_hessian=None,direction="inverse"):
+        # direction is either "forward" (to log-scaled space) or "inverse" (back to original scale)
+        x = np.array(x)
+        if direction == "inverse":
+            z = np.exp(x)
+        elif direction == "forward":
+            z = np.log(x)
+        else:
+            raise ValueError("Transformation direction not recognized.")
+
+        if not isinstance(likelihood_hessian,np.ndarray): # can't use likelihood_hessian == None because it is an array if supplied
+            # print("No valid Hessian supplied. Returning only parameter estimates")
+            return z
+        else:
+            #Jacobian for transformation. See Reparameterization at https://en.wikipedia.org/wiki/Fisher_information 
+            J = np.diag(np.exp(x))
+
+            if direction == "inverse":
+                Ji = np.linalg.inv(J)                            
+                z_cov = np.linalg.inv( Ji.transpose() @ likelihood_hessian @ Ji ) 
+            elif direction == "forward":
+                z_cov = np.linalg.inv( J.transpose() @ likelihood_hessian @ J ) 
+
+            return z,z_cov  
+
+def _parameter_transform_identity(x,likelihood_hessian=None,direction="inverse"):
+    # define as unity transform unless overwritten
+        z = np.array(x)
+
+        if not isinstance(likelihood_hessian,np.ndarray): # can't use likelihood_hessian == None because it is an array if supplied
+            # print("No valid Hessian supplied. Returning only parameter estimates")
+            return z
+        else:
+            J = np.eye((len(z),len(z)))
+            z_cov = np.linalg.inv( J.transpose() @ likelihood_hessian @ J ) 
+            return z,z_cov 
