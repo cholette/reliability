@@ -186,7 +186,17 @@ class poisson_process:
     
     def cumulative_intensity(self,t1,t0=0):
         intensity = lambda t: self.intensity(t,*self.parameters)
-        return quad(intensity,t0,t1)[0]
+        LAMBDA = [0]*len(t1)
+        for ii in range(len(t1)):
+            if len(list(t0))==1:
+                t0ii = t0
+            elif len(t0) != len(list(t1)):
+                raise ValueError("t0 must be an integer or a list of the same length as t1")
+            else:
+                t0ii = t0[ii]
+            LAMBDA[ii] = quad(intensity,t0ii,t1[ii])[0]
+        
+        return LAMBDA
     
     def log_intensity(self,t):
         return np.log(self.intensity(t,*self.parameters))
@@ -365,13 +375,7 @@ def kaplan_meier(ti,observed,plot=True,confidence_interval="greenwood"):
         ni -= np.sum(droppedOut)
     
     uti = np.insert(uti,0,0)
-    Fhat = 1-Rhat
-
-    if plot:
-        fig, ax = plt.subplots()
-        ax.step(ti,1-Rhat,where="post")
-        ax.set_xlabel("Time")
-        ax.set_ylabel("$\hat{F}$")    
+    Fhat = 1-Rhat   
 
     if confidence_interval.lower() == "greenwood":
         v = (Rhat**2)*S
@@ -383,8 +387,60 @@ def kaplan_meier(ti,observed,plot=True,confidence_interval="greenwood"):
         cm = np.log(-np.log(Rhat))-1.96*np.sqrt(v)
         LB = 1-np.exp(-np.exp(cm))
         UB = 1-np.exp(-np.exp(cp))
+    else:
+        raise ValueError("confidence_interval not recognized. Use ""greenwood"" or ""exponential"" """)
 
-    return uti,Fhat,LB,UB
+    if plot:
+        fig, ax = plt.subplots()
+        ax.step(uti,Fhat,where="post",label=r"$\hat{F}$",color="blue")
+        ax.fill_between(uti,LB,y2=UB,linestyle='--',color="blue",step="post",label="95% CI",alpha=0.1)
+        ax.set_xlabel("Time")
+        ax.set_ylabel("$\hat{F}$")
+        ax.set_ylim((0,ax.get_ylim()[1]))
+        plt.legend()
+        return uti,Fhat,LB,UB,fig,ax
+    else:
+        return uti,Fhat,LB,UB
+
+def empirical_mean_cumulative_function(event_times,suspension_times,plot=True,confidence_interval="normal"):
+    
+    n_systems = len(event_times)
+    tau = suspension_times
+    
+    # create a single time grid from the flattened event times
+    t = np.array([item for sublist in event_times for item in sublist])
+    t.sort()
+    
+    n = np.zeros((n_systems,len(t)))
+    d = np.zeros((n_systems,len(t)))
+    for ii in range(n_systems):
+        d[ii,t<=tau[ii]] = 1
+        for tij in event_times[ii]:
+            n[ii,tij==t] = 1
+    
+    m_hat = n.sum(axis=0)/d.sum(axis=0)
+    M_hat = m_hat.cumsum()
+    V_hat = np.sum( np.cumsum( d/d.sum(axis=0)*(n-m_hat),axis=1)**2, axis=0)
+
+    if confidence_interval.lower() == "normal":
+        M_UCL = M_hat + 1.96*np.sqrt(V_hat)
+        M_LCL = M_hat - 1.96*np.sqrt(V_hat)
+    else:
+        raise ValueError("confidence_interval not recognized")
+
+    t = np.insert(t,0,0)
+    M_hat = np.insert(M_hat,0,0)
+    if plot:
+        fig, ax = plt.subplots()
+        ax.step(t,M_hat,where="post",label=r"$\hat{M}$",linewidth=2,color="blue")
+        ax.fill_between(t[1::],M_LCL,y2=M_UCL,linestyle='--',linewidth=2,color="blue",step="post",label="95% CI",alpha=0.1)
+        ax.set_xlabel("Time")
+        ax.set_ylabel(r"$\hat{M}$") 
+        ax.set_ylim((0,ax.get_ylim()[1]))
+        plt.legend()  
+        return t,M_hat, M_LCL, M_UCL, fig, ax
+    else:
+        return t,M_hat, M_LCL, M_UCL
 
 def _parameter_transform_log(x,likelihood_hessian=None,direction="inverse"):
         # direction is either "forward" (to log-scaled space) or "inverse" (back to original scale)
