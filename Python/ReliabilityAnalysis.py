@@ -392,10 +392,10 @@ def kaplan_meier(ti,observed,plot=True,confidence_interval="greenwood"):
 
     if plot:
         fig, ax = plt.subplots()
-        ax.step(uti,Fhat,where="post",label=r"$\hat{F}$",color="blue")
+        ax.step(uti,Fhat,where="post",label=r"$\hat{F}(t)$",color="blue")
         ax.fill_between(uti,LB,y2=UB,linestyle='--',color="blue",step="post",label="95% CI",alpha=0.1)
         ax.set_xlabel("Time")
-        ax.set_ylabel("$\hat{F}$")
+        ax.set_ylabel("$\hat{F}(t)$")
         ax.set_ylim((0,ax.get_ylim()[1]))
         plt.legend()
         return uti,Fhat,LB,UB,fig,ax
@@ -404,6 +404,13 @@ def kaplan_meier(ti,observed,plot=True,confidence_interval="greenwood"):
 
 def empirical_mean_cumulative_function(event_times,suspension_times,plot=True,confidence_interval="normal"):
     
+    # [1] Chapter 12.1A of Tobias, P.A., Trindade, D., 2011. Applied Reliability, Third. ed. CRC Press LLC, London, United Kingdom.
+
+    # ensure that we have a list of lists
+    if (not isinstance(event_times,list)) or (not any(isinstance(el, list) for el in event_times)):
+        raise ValueError("event_times must be a list of lists")
+        
+        
     n_systems = len(event_times)
     tau = suspension_times
     
@@ -420,22 +427,32 @@ def empirical_mean_cumulative_function(event_times,suspension_times,plot=True,co
     
     m_hat = n.sum(axis=0)/d.sum(axis=0)
     M_hat = m_hat.cumsum()
-    V_hat = np.sum( np.cumsum( d/d.sum(axis=0)*(n-m_hat),axis=1)**2, axis=0)
-
-    if confidence_interval.lower() == "normal":
-        M_UCL = M_hat + 1.96*np.sqrt(V_hat)
-        M_LCL = M_hat - 1.96*np.sqrt(V_hat)
+    
+    if n_systems == 1:
+        print('Warning: Confidence intervals cannot be estimated for a single asset')
+        M_UCL = np.nan*np.ones(M_hat.shape)
+        M_LCL = M_UCL
     else:
-        raise ValueError("confidence_interval not recognized")
+        V_hat = np.sum( np.cumsum( d/d.sum(axis=0)*(n-m_hat),axis=1)**2, axis=0)
+        se_hat = np.sqrt(V_hat)
+        if confidence_interval.lower() == "normal":
+            M_UCL = M_hat + 1.96*se_hat
+            M_LCL = M_hat - 1.96*se_hat
+        elif confidence_interval == "logit":
+            w = np.exp(1.96*se_hat/M_hat)
+            M_UCL = w*M_hat
+            M_LCL = M_hat/w
+        else:
+            raise ValueError("confidence_interval not recognized")
 
     t = np.insert(t,0,0)
     M_hat = np.insert(M_hat,0,0)
     if plot:
         fig, ax = plt.subplots()
-        ax.step(t,M_hat,where="post",label=r"$\hat{M}$",linewidth=2,color="blue")
+        ax.step(t,M_hat,where="post",label=r"$\hat{M}(t)$",linewidth=2,color="blue")
         ax.fill_between(t[1::],M_LCL,y2=M_UCL,linestyle='--',linewidth=2,color="blue",step="post",label="95% CI",alpha=0.1)
         ax.set_xlabel("Time")
-        ax.set_ylabel(r"$\hat{M}$") 
+        ax.set_ylabel(r"$\hat{M}(t)$") 
         ax.set_ylim((0,ax.get_ylim()[1]))
         plt.legend()  
         return t,M_hat, M_LCL, M_UCL, fig, ax
