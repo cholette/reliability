@@ -417,6 +417,7 @@ def empirical_mean_cumulative_function(event_times,suspension_times,plot=True,co
     # create a single time grid from the flattened event times
     t = np.array([item for sublist in event_times for item in sublist])
     t.sort()
+    t = np.unique(t)
     
     n = np.zeros((n_systems,len(t)))
     d = np.zeros((n_systems,len(t)))
@@ -445,8 +446,16 @@ def empirical_mean_cumulative_function(event_times,suspension_times,plot=True,co
         else:
             raise ValueError("confidence_interval not recognized")
 
+    # append zero
     t = np.insert(t,0,0)
     M_hat = np.insert(M_hat,0,0)
+
+    # append last censoring time
+    t = np.append(t,max(tau))
+    M_hat = np.append(M_hat,M_hat[-1])
+    M_LCL = np.append(M_LCL,M_LCL[-1])
+    M_UCL = np.append(M_UCL,M_LCL[-1])
+
     if plot:
         fig, ax = plt.subplots()
         ax.step(t,M_hat,where="post",label=r"$\hat{M}(t)$",linewidth=2,color="blue")
