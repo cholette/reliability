@@ -5,13 +5,13 @@ from scipy.integrate import quad
 import numpy as np
 import matplotlib.pyplot as plt
 import numdifftools as ndt
+from matplotlib.ticker import AutoMinorLocator
 
 class reliability_distribution(stats.rv_continuous):
     def __init__(self,*args,**kwargs): #need *args and **kwargs so that I pass these into the methods inherited from the parent class!
-        # self = stats.rv_continuous.__init__(self,*args,**kwargs)
-        super(reliability_distribution,self).__init__()
-        self.a=0  # alter support from 0 to \infty (support is self.a <= x <= self.b)    
-    
+        stats.rv_continuous.__init__(self,*args,**kwargs)
+        self.a = 0
+
     def reliability(self,x,*args,**kwargs):
         return self.sf(x,*args,**kwargs)
     
@@ -54,7 +54,7 @@ class reliability_distribution(stats.rv_continuous):
     def transform_scale(self,x,likelihood_hessian=None,direction="inverse"):
          return _parameter_transform_identity(x,likelihood_hessian=likelihood_hessian,\
             direction=direction)
-        
+
 class reliability_distribution_frozen(stats._distn_infrastructure.rv_frozen):
     def reliability(self,x):
         return self.dist.sf(x,*self.args, **self.kwds)
@@ -178,6 +178,41 @@ class weibull(reliability_distribution):
     def transform_scale(self,x,likelihood_hessian=None,direction="inverse"):
         return _parameter_transform_log(x,likelihood_hessian=likelihood_hessian,\
             direction=direction)
+
+def weibull_probability_plot(dist,data=None,ax=None):  
+
+    assert isinstance(dist,reliability_distribution_frozen),"Distribution must be frozen before using this function."
+    assert type(dist.dist) in [weibull], "Distribution not supported. Must be Weibull for now."
+        
+    t = np.linspace( dist.ppf(1e-3),dist.ppf(1-1e-3),100 )
+    Y = np.log(-np.log(dist.reliability(t)))
+
+    if ax == None:
+        fig, ax = plt.subplots()
+
+    ax.semilogx(t,Y,linestyle="--",color="red",label="Distribution")
+    ax.set_xlabel("Time")
+    ax.set_ylabel("$F(t)$")
+
+    if (data is not None):
+        assert isinstance(data,dict), "Data needs to be a dict with keys [""times"",""ecdf""]."
+        k = list(data.keys())
+        assert k[0] in ['times','ecdf'], "Data must be a dict with keys [""times"",""ecdf""]."
+        assert k[1] in ['times','ecdf'], "Data must be a dict with keys [""times"",""ecdf""]."
+        assert len(data['times'])==len(data['ecdf']), "time and Fhat lists must be the same length"
+
+        Yd = np.log(-np.log(1-data['ecdf']))
+        ax.semilogx(data['times'],Yd,'.',color="blue",label="Data")
+        plt.legend()
+            
+    yt = np.log(-np.log([0.001,0.01,0.1,0.2,0.4,0.6,0.8,0.9,0.99,0.999]))
+    ax.set_yticks(yt)
+    ax.set_yticklabels(["{0:.3f}".format(1-np.exp(-np.exp(x))) for x in yt])  
+    ax.grid(visible=True,which="major")
+    ax.legend(loc='upper left')
+
+    return ax
+
 
 class poisson_process:
     def __init__(self,intensity_function,parameters):
