@@ -1,4 +1,5 @@
 # note that all packages must have licenses that permit commercial use!
+from multiprocessing.sharedctypes import Value
 from scipy import stats as stats
 from scipy import optimize as opt
 from scipy.integrate import quad
@@ -213,7 +214,6 @@ def weibull_probability_plot(dist,data=None,ax=None):
 
     return ax
 
-
 class poisson_process:
     def __init__(self,intensity_function,parameters):
         self.parameters = parameters
@@ -272,7 +272,7 @@ class poisson_process:
         self.parameters = original_parameters
         return -like
 
-    def fit(self,event_times,p0,truncation_times=None): # Overwriting scipy.stats fitting because it seems that it doesn't handle censoring
+    def fit(self,event_times,p0,truncation_times=None):
         y0 = self.transform_scale(p0,direction="forward")
         obj = lambda x: self.nnlf(self.transform_scale(x),event_times,truncation_times=truncation_times)
         result = opt.minimize(obj,y0)
@@ -310,12 +310,12 @@ class power_law_nhpp(poisson_process):
 
         # check for valid truncation time
         tau = []
-        if truncation_times != None:
-            for m in range(len(event_times)):
-                assert truncation_times[m] > max(event_times[m]), "Invalid truncation time for asset "+str(m)
-                tau.append(truncation_times[m])
-        else:
-            tau.append(max(event_times[m]))
+        for m in range(len(event_times)):
+            if truncation_times != None:
+                    assert truncation_times[m] > max(event_times[m]), "Invalid truncation time for asset "+str(m)
+                    tau.append(truncation_times[m])
+            else:
+                raise ValueError("This method currently only works for time-truncated tests.")
         
         # analytical computation of MLE for observed failure times
         num_failures = 0
@@ -437,7 +437,7 @@ def kaplan_meier(ti,observed,plot=True,confidence_interval="greenwood"):
     else:
         return uti,Fhat,LB,UB
 
-def empirical_mean_cumulative_function(event_times,suspension_times,plot=True,confidence_interval="normal"):
+def empirical_mean_cumulative_function(event_times,suspension_times=None,plot=True,confidence_interval="normal"):
     
     # [1] Chapter 12.1A of Tobias, P.A., Trindade, D., 2011. Applied Reliability, Third. ed. CRC Press LLC, London, United Kingdom.
 
@@ -447,7 +447,10 @@ def empirical_mean_cumulative_function(event_times,suspension_times,plot=True,co
         
         
     n_systems = len(event_times)
-    tau = suspension_times
+    if suspension_times == None:
+        tau = [max(f) for f in event_times]
+    else:
+        tau = suspension_times
     
     # create a single time grid from the flattened event times
     t = np.array([item for sublist in event_times for item in sublist])
