@@ -1,5 +1,4 @@
 # note that all packages must have licenses that permit commercial use!
-from multiprocessing.sharedctypes import Value
 from scipy import stats as stats
 from scipy import optimize as opt
 from scipy.integrate import quad
@@ -35,7 +34,7 @@ class reliability_distribution(stats.rv_continuous):
         s = np.sqrt(np.diag(p_cov))
         p_ci = p_hat + 1.96*np.array([-s,s])
         
-        return p_hat, p_ci.transpose()
+        return p_hat, p_ci.transpose(), p_cov
     
     def fit_interval(self,ti,ins,p0,observed="all",bnds=None): # Overwriting scipy.stats fitting because it seems that it doesn't handle censoring
         y0 = self.transform_scale(p0,direction="forward")
@@ -53,6 +52,7 @@ class reliability_distribution(stats.rv_continuous):
         return reliability_distribution_frozen(self, *args, **kwds) # freeze using new reliabilty class, otherwise new functions won't be defined (e.g. reliability)
     
     def transform_scale(self,x,likelihood_hessian=None,direction="inverse"):
+        # define as unity transform unless overwritten
          return _parameter_transform_identity(x,likelihood_hessian=likelihood_hessian,\
             direction=direction)
 
@@ -180,40 +180,6 @@ class weibull(reliability_distribution):
         return _parameter_transform_log(x,likelihood_hessian=likelihood_hessian,\
             direction=direction)
 
-def weibull_probability_plot(dist,data=None,ax=None):  
-
-    assert isinstance(dist,reliability_distribution_frozen),"Distribution must be frozen before using this function."
-    assert type(dist.dist) in [weibull], "Distribution not supported. Must be Weibull for now."
-        
-    t = np.linspace( dist.ppf(1e-3),dist.ppf(1-1e-3),100 )
-    Y = np.log(-np.log(dist.reliability(t)))
-
-    if ax == None:
-        fig, ax = plt.subplots()
-
-    ax.semilogx(t,Y,linestyle="--",color="red",label="Distribution")
-    ax.set_xlabel("Time")
-    ax.set_ylabel("$F(t)$")
-
-    if (data is not None):
-        assert isinstance(data,dict), "Data needs to be a dict with keys [""times"",""ecdf""]."
-        k = list(data.keys())
-        assert k[0] in ['times','ecdf'], "Data must be a dict with keys [""times"",""ecdf""]."
-        assert k[1] in ['times','ecdf'], "Data must be a dict with keys [""times"",""ecdf""]."
-        assert len(data['times'])==len(data['ecdf']), "time and Fhat lists must be the same length"
-
-        Yd = np.log(-np.log(1-data['ecdf']))
-        ax.semilogx(data['times'],Yd,'.',color="blue",label="Data")
-        plt.legend()
-            
-    yt = np.log(-np.log([0.001,0.01,0.1,0.2,0.4,0.6,0.8,0.9,0.99,0.999]))
-    ax.set_yticks(yt)
-    ax.set_yticklabels(["{0:.3f}".format(1-np.exp(-np.exp(x))) for x in yt])  
-    ax.grid(visible=True,which="major")
-    ax.legend(loc='upper left')
-
-    return ax
-
 class poisson_process:
     def __init__(self,intensity_function,parameters):
         self.parameters = parameters
@@ -272,7 +238,7 @@ class poisson_process:
         self.parameters = original_parameters
         return -like
 
-    def fit(self,event_times,p0,truncation_times=None):
+    def fit(self,event_times,p0,truncation_times=None): # Overwriting scipy.stats fitting because it seems that it doesn't handle censoring
         y0 = self.transform_scale(p0,direction="forward")
         obj = lambda x: self.nnlf(self.transform_scale(x),event_times,truncation_times=truncation_times)
         result = opt.minimize(obj,y0)
@@ -282,7 +248,7 @@ class poisson_process:
         s = np.sqrt(np.diag(p_cov))
         p_ci = p_hat + 1.96*np.array([-s,s])
 
-        return p_hat, p_ci.transpose()
+        return p_hat, p_ci.transpose(),p_cov
 
     def transform_scale(self,x,likelihood_hessian=None,direction="inverse"):
          return _parameter_transform_log(x,likelihood_hessian=likelihood_hessian,\
@@ -310,12 +276,12 @@ class power_law_nhpp(poisson_process):
 
         # check for valid truncation time
         tau = []
-        for m in range(len(event_times)):
-            if truncation_times != None:
-                    assert truncation_times[m] > max(event_times[m]), "Invalid truncation time for asset "+str(m)
-                    tau.append(truncation_times[m])
-            else:
-                raise ValueError("This method currently only works for time-truncated tests.")
+        if truncation_times != None:
+            for m in range(len(event_times)):
+                assert truncation_times[m] > max(event_times[m]), "Invalid truncation time for asset "+str(m)
+                tau.append(truncation_times[m])
+        else:
+            tau.append(max(event_times[m]))
         
         # analytical computation of MLE for observed failure times
         num_failures = 0
@@ -341,7 +307,7 @@ class power_law_nhpp(poisson_process):
         s = np.sqrt(np.diag(p_cov))
         p_ci = p_hat + 1.96*np.array([-s,s])
 
-        return p_hat,p_ci.transpose()
+        return p_hat,p_ci.transpose(),p_cov
 
     def transform_scale(self,x,likelihood_hessian=None,direction="inverse"):
         return _parameter_transform_log(x,likelihood_hessian=likelihood_hessian,\
@@ -437,7 +403,7 @@ def kaplan_meier(ti,observed,plot=True,confidence_interval="greenwood"):
     else:
         return uti,Fhat,LB,UB
 
-def empirical_mean_cumulative_function(event_times,suspension_times=None,plot=True,confidence_interval="normal"):
+def empirical_mean_cumulative_function(event_times,suspension_times,plot=True,confidence_interval="normal"):
     
     # [1] Chapter 12.1A of Tobias, P.A., Trindade, D., 2011. Applied Reliability, Third. ed. CRC Press LLC, London, United Kingdom.
 
@@ -447,10 +413,7 @@ def empirical_mean_cumulative_function(event_times,suspension_times=None,plot=Tr
         
         
     n_systems = len(event_times)
-    if suspension_times == None:
-        tau = [max(f) for f in event_times]
-    else:
-        tau = suspension_times
+    tau = suspension_times
     
     # create a single time grid from the flattened event times
     t = np.array([item for sublist in event_times for item in sublist])
@@ -506,6 +469,72 @@ def empirical_mean_cumulative_function(event_times,suspension_times=None,plot=Tr
     else:
         return t,M_hat, M_LCL, M_UCL
 
+def weibull_probability_plot(dist,data=None,ax=None,confidence_bounds=None,parameter_covariance=None):  
+
+    assert isinstance(dist,reliability_distribution_frozen),"Distribution must be frozen before using this function."
+    assert type(dist.dist) in [weibull], "Distribution not supported. Must be Weibull for now."
+        
+    t = np.linspace( dist.ppf(1e-3),dist.ppf(1-1e-3),100 )
+    Y = np.log(-np.log(dist.reliability(t)))
+
+    ############################ Nominal plot ##################################
+    if ax == None:
+        fig, ax = plt.subplots()
+
+    ax.plot(np.log(t),Y,linestyle="--",color="red",label="Distribution")
+    ax.set_xlabel(r"Time")
+    ax.set_ylabel(r"$F(t)$")
+
+    if (data is not None):
+        assert isinstance(data,dict), "Data needs to be a dict with keys [""times"",""ecdf""]."
+        k = list(data.keys())
+        assert k[0] in ['times','ecdf'], "Data must be a dict with keys [""times"",""ecdf""]."
+        assert k[1] in ['times','ecdf'], "Data must be a dict with keys [""times"",""ecdf""]."
+        assert len(data['times'])==len(data['ecdf']), "time and Fhat lists must be the same length"
+
+        Yd = np.log(-np.log(1-data['ecdf']))
+        ax.plot(np.log(data['times']),Yd,'.',color="blue",label="Data")
+        plt.legend()
+    
+    ######################### confidence bounds ##########################
+    if confidence_bounds!=None and confidence_bounds.lower() == "time":
+        assert isinstance(parameter_covariance,np.ndarray), "You must supply parameter_covariance to get confidence bounds"
+        assert parameter_covariance.shape[0]==2 and parameter_covariance.shape[1] == 2,"Parameter covariance must be 2-by-2"
+
+        a,b = dist.kwds['scale'],dist.args[0]
+        R = dist.reliability(t)
+        u = np.log(t)
+
+        fun = lambda x: 1/x[1] * np.log(-np.log(R))+np.log(x[0])
+        p = np.array([a,b])
+        g = ndt.Gradient(fun)(p)
+        w = 1.96*np.sqrt( np.sum(g@parameter_covariance*g,axis=1) )
+        log_TL,log_TU = u-w,u+w
+        ax.fill_betweenx(Y,log_TL,log_TU,label="CI (time)",color='red',alpha=0.1)
+
+    elif confidence_bounds!=None and confidence_bounds.lower() == "reliability":
+        assert isinstance(parameter_covariance,np.ndarray), "You must supply parameter_covariance to get confidence bounds"
+        assert parameter_covariance.shape[0]==2 and parameter_covariance.shape[1] == 2,"Parameter covariance must be 2-by-2"
+
+        a,b = dist.kwds['scale'],dist.args[0]
+        R = dist.reliability(t)
+        u = np.log(-np.log(R))
+        fun = lambda x: x[1]*(np.log(t)-np.log(x[0]))
+        p = np.array([a,b])
+        g = ndt.Gradient(fun)(p)
+        w = 1.96*np.sqrt( np.sum(g@parameter_covariance*g,axis=1) )
+        log_RL,log_RU = u-w,u+w
+        ax.fill_between(np.log(t),log_RL,log_RU,label="CI (reliability)",color='red',alpha=0.1)
+
+    ######################### format plot ################################
+    yt = np.log(-np.log([0.001,0.01,0.1,0.2,0.4,0.6,0.8,0.9,0.99,0.9999]))
+    ax.set_yticks(yt)
+    ax.set_yticklabels(["{0:.3f}".format(1-np.exp(-np.exp(x))) for x in yt])  
+    ax.grid(visible=True,which="major")
+    ax.legend(loc='upper left')
+
+    return ax
+
 def _parameter_transform_log(x,likelihood_hessian=None,direction="inverse"):
         # direction is either "forward" (to log-scaled space) or "inverse" (back to original scale)
         x = np.array(x)
@@ -532,7 +561,6 @@ def _parameter_transform_log(x,likelihood_hessian=None,direction="inverse"):
             return z,z_cov  
 
 def _parameter_transform_identity(x,likelihood_hessian=None,direction="inverse"):
-    # define as unity transform unless overwritten
         z = np.array(x)
 
         if not isinstance(likelihood_hessian,np.ndarray): # can't use likelihood_hessian == None because it is an array if supplied
@@ -542,3 +570,9 @@ def _parameter_transform_identity(x,likelihood_hessian=None,direction="inverse")
             J = np.eye((len(z),len(z)))
             z_cov = np.linalg.inv( J.transpose() @ likelihood_hessian @ J ) 
             return z,z_cov 
+
+# def _delta_method(fun,parameters,parameter_cov):
+#     # https://en.wikipedia.org/wiki/Delta_method
+
+#     grad = ndt.Gradient(fun)(parameters)
+#     return grad.transpose()*parameter_cov*grad
