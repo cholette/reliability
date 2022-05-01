@@ -4,6 +4,7 @@ from scipy import optimize as opt
 from scipy.integrate import quad
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 import numdifftools as ndt
 from matplotlib.ticker import AutoMinorLocator
 
@@ -497,43 +498,52 @@ def weibull_probability_plot(dist,data=None,ax=None,confidence_bounds=None,param
         plt.legend()
     
     ######################### confidence bounds ##########################
-    if confidence_bounds!=None and confidence_bounds.lower() == "time":
+    if confidence_bounds!=None:
+        assert confidence_bounds.lower() in ["time","reliability"], "confidence_bounds must be either ""Time"" or ""Reliability""."
         assert isinstance(parameter_covariance,np.ndarray), "You must supply parameter_covariance to get confidence bounds"
         assert parameter_covariance.shape[0]==2 and parameter_covariance.shape[1] == 2,"Parameter covariance must be 2-by-2"
 
-        a,b = dist.kwds['scale'],dist.args[0]
-        R = dist.reliability(t)
-        u = np.log(t)
-
-        fun = lambda x: 1/x[1] * np.log(-np.log(R))+np.log(x[0])
-        p = np.array([a,b])
-        g = ndt.Gradient(fun)(p)
-        w = 1.96*np.sqrt( np.sum(g@parameter_covariance*g,axis=1) )
-        log_TL,log_TU = u-w,u+w
-        ax.fill_betweenx(Y,log_TL,log_TU,label="CI (time)",color='red',alpha=0.1)
-
-    elif confidence_bounds!=None and confidence_bounds.lower() == "reliability":
-        assert isinstance(parameter_covariance,np.ndarray), "You must supply parameter_covariance to get confidence bounds"
-        assert parameter_covariance.shape[0]==2 and parameter_covariance.shape[1] == 2,"Parameter covariance must be 2-by-2"
-
-        a,b = dist.kwds['scale'],dist.args[0]
-        R = dist.reliability(t)
-        u = np.log(-np.log(R))
-        fun = lambda x: x[1]*(np.log(t)-np.log(x[0]))
-        p = np.array([a,b])
-        g = ndt.Gradient(fun)(p)
-        w = 1.96*np.sqrt( np.sum(g@parameter_covariance*g,axis=1) )
-        log_RL,log_RU = u-w,u+w
-        ax.fill_between(np.log(t),log_RL,log_RU,label="CI (reliability)",color='red',alpha=0.1)
+        RL,RU = weibull_reliability_confidence_interval(dist,t,parameter_covariance,kind=confidence_bounds,c=1.96) 
+        FL,FU = np.log(-np.log(RL)),np.log(-np.log(RU))       
+        ax.fill_between(np.log(t),FL,FU,label="CI ({0})".format(confidence_bounds),color='red',alpha=0.1)
 
     ######################### format plot ################################
-    yt = np.log(-np.log([0.001,0.01,0.1,0.2,0.4,0.6,0.8,0.9,0.99,0.9999]))
-    ax.set_yticks(yt)
-    ax.set_yticklabels(["{0:.3f}".format(1-np.exp(-np.exp(x))) for x in yt])  
+    yt = ax.get_yticks().tolist()
+    xt = ax.get_xticks().tolist()
+    ax.xaxis.set_major_locator(mticker.FixedLocator(xt))
+    ax.yaxis.set_major_locator(mticker.FixedLocator(yt))
+    ax.set_yticklabels(["{0:.3f}%".format((1-np.exp(-np.exp(x)))*100) for x in yt])  
+    ax.set_xticklabels(["{0:.0f}".format(np.exp(x)) for x in xt])  
     ax.grid(visible=True,which="major")
     ax.legend(loc='upper left')
 
     return ax
+
+def weibull_reliability_confidence_interval(dist,t,p_cov,kind="Reliability",c=1.96):
+        
+        assert type(dist.dist) is weibull and isinstance(dist,reliability_distribution_frozen),\
+            "The distribution must be a frozen Weibull distribution."
+        assert kind.lower() in ["time",'reliability'],"kind must be ""time"" or ""reliability""."
+
+        # The below is a bit lazy and uses numerical gradients. Might use analytical gradients later.
+        a,b = dist.kwds['scale'],dist.args[0]
+        p = np.array([a,b])
+        R = dist.reliability(t)
+        if kind.lower() == "time":
+            u = np.log(t)
+            fun = lambda x: 1/x[1] * np.log(-np.log(R))+np.log(x[0])
+            g = ndt.Gradient(fun)(p)
+            w = c*np.sqrt( np.sum(g@p_cov*g,axis=1) )
+            RL,RU = dist.reliability(np.exp(u+w)),dist.reliability(np.exp(u-w))
+
+        elif kind.lower() == "reliability":
+            u = np.log(-np.log(R))
+            fun = lambda x: x[1]*(np.log(t)-np.log(x[0]))
+            g = ndt.Gradient(fun)(p)
+            w = c*np.sqrt( np.sum(g@p_cov*g,axis=1) )
+            RL,RU = np.exp(-np.exp(u-w)),np.exp(-np.exp(u+w))
+        
+        return RL,RU
 
 def _parameter_transform_log(x,likelihood_hessian=None,direction="inverse"):
         # direction is either "forward" (to log-scaled space) or "inverse" (back to original scale)
@@ -570,9 +580,3 @@ def _parameter_transform_identity(x,likelihood_hessian=None,direction="inverse")
             J = np.eye((len(z),len(z)))
             z_cov = np.linalg.inv( J.transpose() @ likelihood_hessian @ J ) 
             return z,z_cov 
-
-# def _delta_method(fun,parameters,parameter_cov):
-#     # https://en.wikipedia.org/wiki/Delta_method
-
-#     grad = ndt.Gradient(fun)(parameters)
-#     return grad.transpose()*parameter_cov*grad
