@@ -189,7 +189,7 @@ class poisson_process:
     def cumulative_intensity(self,t1,t0=0):
         intensity = lambda t: self.intensity(t,*self.parameters)
         LAMBDA = [0]*len(t1)
-        for ii in range(len(t1)):
+        for ii,_ in enumerate(t1):
             if len(list(t0))==1:
                 t0ii = t0
             elif len(t0) != len(list(t1)):
@@ -224,11 +224,11 @@ class poisson_process:
 
         # check for valid truncation time
         if truncation_times != None:
-            for m in range(len(event_times)):
+            for m,_ in enumerate(event_times):
                 assert truncation_times[m] > max(event_times[m]), "Invalid truncation time for asset "+str(m)
 
         like = 0
-        for m in range(len(event_times)): 
+        for m,_ in enumerate(event_times): 
             for f in event_times[m]:
                 like += self.log_intensity(f)
         
@@ -278,7 +278,7 @@ class power_law_nhpp(poisson_process):
         # check for valid truncation time
         tau = []
         if truncation_times != None:
-            for m in range(len(event_times)):
+            for m,_ in enumerate(event_times):
                 assert truncation_times[m] > max(event_times[m]), "Invalid truncation time for asset "+str(m)
                 tau.append(truncation_times[m])
         else:
@@ -287,15 +287,15 @@ class power_law_nhpp(poisson_process):
         # analytical computation of MLE for observed failure times
         num_failures = 0
         den_beta_hat = 0
-        for n in range(len(event_times)):
+        for n,_ in enumerate(event_times):
             failures = event_times[n]
             num_failures += len(failures)
-            for k in range(len(failures)):
+            for k,_ in enumerate(failures):
                 den_beta_hat += (np.log(tau[n])-np.log(failures[k]))
         beta_hat = num_failures/den_beta_hat
 
         sum_truncation_times = 0
-        for n in range(len(event_times)):
+        for n,_ in enumerate(event_times):
             sum_truncation_times += tau[n]**beta_hat
         alpha_hat = num_failures/sum_truncation_times
         p_hat = [alpha_hat,beta_hat]
@@ -470,19 +470,19 @@ def empirical_mean_cumulative_function(event_times,suspension_times,plot=True,co
     else:
         return t,M_hat, M_LCL, M_UCL
 
-def weibull_probability_plot(dist,data=None,ax=None,confidence_bounds=None,parameter_covariance=None):  
+def weibull_probability_plot(dist,data=None,ax=None,confidence_bounds=None,parameter_covariance=None,figsize=(7,7)):  
 
     assert isinstance(dist,reliability_distribution_frozen),"Distribution must be frozen before using this function."
     assert type(dist.dist) in [weibull], "Distribution not supported. Must be Weibull for now."
         
     t = np.linspace( dist.ppf(1e-3),dist.ppf(1-1e-3),100 )
-    Y = np.log(-np.log(dist.reliability(t)))
+    Y = np.log10(-np.log(dist.reliability(t)))
 
     ############################ Nominal plot ##################################
     if ax == None:
-        fig, ax = plt.subplots()
+        fig, ax = plt.subplots(figsize=figsize)
 
-    ax.plot(np.log(t),Y,linestyle="--",color="red",label="Distribution")
+    ax.semilogx(t,Y,linestyle="--",color="red",label="Distribution")
     ax.set_xlabel(r"Time")
     ax.set_ylabel(r"$F(t)$")
 
@@ -493,8 +493,8 @@ def weibull_probability_plot(dist,data=None,ax=None,confidence_bounds=None,param
         assert k[1] in ['times','ecdf'], "Data must be a dict with keys [""times"",""ecdf""]."
         assert len(data['times'])==len(data['ecdf']), "time and Fhat lists must be the same length"
 
-        Yd = np.log(-np.log(1-data['ecdf']))
-        ax.plot(np.log(data['times']),Yd,'.',color="blue",label="Data")
+        Yd = np.log10(-np.log(1-data['ecdf']))
+        ax.semilogx(data['times'],Yd,'.',color="blue",label="Data")
         plt.legend()
     
     ######################### confidence bounds ##########################
@@ -504,16 +504,15 @@ def weibull_probability_plot(dist,data=None,ax=None,confidence_bounds=None,param
         assert parameter_covariance.shape[0]==2 and parameter_covariance.shape[1] == 2,"Parameter covariance must be 2-by-2"
 
         RL,RU = weibull_reliability_confidence_interval(dist,t,parameter_covariance,kind=confidence_bounds,c=1.96) 
-        FL,FU = np.log(-np.log(RL)),np.log(-np.log(RU))       
-        ax.fill_between(np.log(t),FL,FU,label="CI ({0})".format(confidence_bounds),color='red',alpha=0.1)
+        FL,FU = np.log10(-np.log(RL)),np.log10(-np.log(RU))       
+        ax.fill_between(t,FL,FU,label=f"CI ({confidence_bounds})",color='red',alpha=0.1)
 
     ######################### format plot ################################
-    yt = ax.get_yticks().tolist()
-    xt = ax.get_xticks().tolist()
-    ax.xaxis.set_major_locator(mticker.FixedLocator(xt))
-    ax.yaxis.set_major_locator(mticker.FixedLocator(yt))
-    ax.set_yticklabels(["{0:.3f}%".format((1-np.exp(-np.exp(x)))*100) for x in yt])  
-    ax.set_xticklabels(["{0:.0f}".format(np.exp(x)) for x in xt])  
+    ytc = np.log10(-np.log([0.995, 0.99, 0.95, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1,0.01, 0.001, 0.00001]))
+    ax.set_ylim((ytc.min(),ytc.max()))
+    ax.set_yticks(ytc)
+    ax.yaxis.set_major_locator(mticker.FixedLocator(ytc))
+    ax.set_yticklabels([f"{(1-np.exp(-10**x))*100:.1f}%" for x in ytc])  
     ax.grid(visible=True,which="major")
     ax.legend(loc='upper left')
 
