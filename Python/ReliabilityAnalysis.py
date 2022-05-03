@@ -314,6 +314,42 @@ class power_law_nhpp(poisson_process):
         return _parameter_transform_log(x,likelihood_hessian=likelihood_hessian,\
             direction=direction)
 
+    def mcf_confidence_interval(self,t,p_cov,kind="mcf",c=1.96):
+    
+        assert kind.lower() in ["time",'mcf'],"kind must be ""time"" or ""mcf""."
+        assert all([(t[ii+1]-t[ii])>=0 for ii in range(len(t)-1)]), "time vector must be sorted"
+        assert t[0]>=0, "Negative time doesn't make sense!"
+        if t[0] == 0:
+            print('Warning: inserting nan for t==0 since logM(t) is undefined.')
+            prependNaN = True
+            t = t[1::]
+        else:
+            prependNaN = False
+
+        # The below is a bit lazy and uses numerical gradients. Might use analytical gradients later.
+        a,b = self.parameters
+        p = np.array([a,b])
+        M = self.cumulative_intensity(t)
+        if kind.lower() == "time":
+            u = np.log(t)
+            fun = lambda x: 1/x[1] * (np.log(M)-np.log(x[0]))
+            g = ndt.Gradient(fun)(p)
+            w = c*np.sqrt( np.sum(g@p_cov*g,axis=1) )
+            ML,MU = self.cumulative_intensity(np.exp(u+w)),self.cumulative_intensity(np.exp(u-w))
+
+        elif kind.lower() == "mcf":
+            u = np.log(M)
+            fun = lambda x: x[1]*np.log(t)+np.log(x[0])
+            g = ndt.Gradient(fun)(p)
+            w = c*np.sqrt( np.sum(g@p_cov*g,axis=1) )
+            ML,MU = np.exp(u-w),np.exp(u+w)
+        
+        if prependNaN:
+            ML = np.insert(ML,0,np.nan)
+            MU = np.insert(MU,0,np.nan)
+        
+        return ML,MU
+
 def ecdf(ti,observed,pos="midpoint",plot=True):
     ti = np.array(ti)
     observed = np.array(observed)
@@ -523,6 +559,14 @@ def weibull_reliability_confidence_interval(dist,t,p_cov,kind="Reliability",c=1.
         assert type(dist.dist) is weibull and isinstance(dist,reliability_distribution_frozen),\
             "The distribution must be a frozen Weibull distribution."
         assert kind.lower() in ["time",'reliability'],"kind must be ""time"" or ""reliability""."
+        assert all([(t[ii+1]-t[ii])>=0 for ii in range(len(t)-1)]), "time vector must be sorted"
+        assert t[0]>=0, "Negative time doesn't make sense!"
+        if t[0] == 0:
+            print('Warning: inserting nan for t==0 since logM(t) is undefined.')
+            prependNaN = True
+            t = t[1::]
+        else:
+            prependNaN = False
 
         # The below is a bit lazy and uses numerical gradients. Might use analytical gradients later.
         a,b = dist.kwds['scale'],dist.args[0]
@@ -542,6 +586,10 @@ def weibull_reliability_confidence_interval(dist,t,p_cov,kind="Reliability",c=1.
             w = c*np.sqrt( np.sum(g@p_cov*g,axis=1) )
             RL,RU = np.exp(-np.exp(u-w)),np.exp(-np.exp(u+w))
         
+        if prependNaN:
+            RL = np.insert(RL,0,np.nan)
+            RU = np.insert(RU,0,np.nan)
+
         return RL,RU
 
 def _parameter_transform_log(x,likelihood_hessian=None,direction="inverse"):
