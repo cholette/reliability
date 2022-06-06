@@ -333,14 +333,14 @@ class power_law_nhpp(poisson_process):
         if kind.lower() == "time":
             u = np.log(t)
             fun = lambda x: 1/x[1] * (np.log(M)-np.log(x[0]))
-            g = ndt.Gradient(fun)(p)
+            g = ndt.Gradient(fun,method='complex')(p)
             w = c*np.sqrt( np.sum(g@p_cov*g,axis=1) )
             ML,MU = self.cumulative_intensity(np.exp(u+w)),self.cumulative_intensity(np.exp(u-w))
 
         elif kind.lower() == "mcf":
             u = np.log(M)
             fun = lambda x: x[1]*np.log(t)+np.log(x[0])
-            g = ndt.Gradient(fun)(p)
+            g = ndt.Gradient(fun,method='complex')(p)
             w = c*np.sqrt( np.sum(g@p_cov*g,axis=1) )
             ML,MU = np.exp(u-w),np.exp(u+w)
         
