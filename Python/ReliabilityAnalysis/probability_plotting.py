@@ -111,7 +111,7 @@ def empirical_mean_cumulative_function(event_times,suspension_times,plot=True,co
     # create a single time grid from the flattened event times
     t = np.array([item for sublist in event_times for item in sublist])
     t.sort()
-    t = np.unique(t)
+    # t = np.unique(t)
     
     n = np.zeros((n_systems,len(t)))
     d = np.zeros((n_systems,len(t)))

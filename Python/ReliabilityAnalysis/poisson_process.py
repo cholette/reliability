@@ -49,7 +49,8 @@ class poisson_process:
         # check for valid truncation time
         if truncation_times != None:
             for m,_ in enumerate(event_times):
-                assert truncation_times[m] > max(event_times[m]), "Invalid truncation time for asset "+str(m)
+                if len(event_times[m]) > 0:
+                    assert truncation_times[m] > max(event_times[m]), "Invalid truncation time for asset "+str(m)
 
         like = 0
         for m,_ in enumerate(event_times): 
@@ -68,7 +69,7 @@ class poisson_process:
         obj = lambda x: self.nnlf(self.transform_scale(x),event_times,truncation_times=truncation_times)
         result = opt.minimize(obj,y0)
         y_hat = result.x
-        H = ndt.Hessian(obj)(y_hat)
+        H = ndt.Hessian(obj,method='complex')(y_hat)
         p_hat,p_cov = self.transform_scale(y_hat,likelihood_hessian=H,direction="inverse")
         s = np.sqrt(np.diag(p_cov))
         p_ci = p_hat + 1.96*np.array([-s,s])
@@ -94,16 +95,14 @@ class power_law_nhpp(poisson_process):
     
     def fit(self,event_times,truncation_times=None):
 
-        # turn into a list if tim is a numpy array. Lists are preferred
-        # since they can be ragged and have different numbers of event times. 
-        if isinstance(event_times,np.ndarray):
-            event_times = event_times.tolist()
+        # event_times must be a list of lists
 
         # check for valid truncation time
         tau = []
         if truncation_times != None:
             for m,_ in enumerate(event_times):
-                assert truncation_times[m] > max(event_times[m]), "Invalid truncation time for asset "+str(m)
+                if len(event_times[m]) > 0:
+                    assert truncation_times[m] > max(event_times[m]), "Invalid truncation time for asset "+str(m)
                 tau.append(truncation_times[m])
         else:
             tau.append(max(event_times[m]))
@@ -127,12 +126,64 @@ class power_law_nhpp(poisson_process):
         # lazy numerical computation of the Hessian and parameter CIs
         y_hat = self.transform_scale(p_hat,direction='forward')
         obj = lambda x: self.nnlf(self.transform_scale(x),event_times,truncation_times=truncation_times)
-        H = ndt.Hessian(obj)(y_hat)
+        H = ndt.Hessian(obj,method='complex')(y_hat)
         _,p_cov = self.transform_scale(y_hat,likelihood_hessian=H,direction="inverse")
         s = np.sqrt(np.diag(p_cov))
         p_ci = p_hat + 1.96*np.array([-s,s])
 
         return p_hat,p_ci.transpose(),p_cov
+    
+    def nnlf_interval(self,p,ni,ins,cumulative=False):
+        
+        assert isinstance(ni,list), "number of events must be a list of lists"
+        assert len(ni)>0, "number of events must be a list of lists"
+        assert all([isinstance(ni[ii],list) for ii in range(len(ni))]), "number of events must be a list of lists"
+            
+        assert isinstance(ins,list), "inspections must be a list of lists"
+        assert len(ins)>0, "inspections must be a list of lists"
+        assert all([isinstance(ins[ii],list) for ii in range(len(ins))]), "inspections must be a list of lists"
+        
+        original_parameters = self.parameters
+        self.parameters = p
+        alpha = p[0]
+        beta = p[1]
+        
+        loglike = 0
+        for m in range(len(ni)):
+            # difference to obtain number of arrivals in the time interval since last inspection
+            if cumulative:
+                nim = np.diff(ni[m])
+            else:
+                nim = ni[m]
+        
+            if len(nim)>0: # otherwise there is no data :(
+                inspec_m = np.array(ins[m])
+                LAMBDA = self.cumulative_intensity(inspec_m[1::],t0=inspec_m[0:-1])
+                for ii,nimii in enumerate(nim):
+                    loglike += stats.poisson(mu=LAMBDA[ii]).logpmf(nimii)
+        
+        self.parameters = original_parameters
+
+        return -loglike
+    
+    def fit_interval(self,ni,ins,p0,cumulative=False,estimate_ci=False): # Overwriting scipy.stats fitting because it seems that it doesn't handle censoring
+        y0 = self.transform_scale(p0,direction="forward")
+        obj = lambda x: self.nnlf_interval(self.transform_scale(x),ni,ins,cumulative=cumulative)
+        result = opt.minimize(obj,y0)
+        y_hat = result.x
+        
+        if estimate_ci:
+            H = ndt.Hessian(obj)(y_hat)
+            p_hat,p_cov = self.transform_scale(y_hat,likelihood_hessian=H,direction="inverse")
+            s = np.sqrt(np.diag(p_cov))
+            p_ci = p_hat + 1.96*np.array([-s,s]) 
+        else:
+            p_hat = self.transform_scale(y_hat,likelihood_hessian=None,direction="inverse")
+            n = p_hat.shape[0]
+            p_ci = np.nan*np.ones((n,2))
+            p_cov = np.nan*np.ones((n,n))
+        
+        return p_hat, p_ci.transpose(),p_cov
 
     def transform_scale(self,x,likelihood_hessian=None,direction="inverse"):
         return _parameter_transform_log(x,likelihood_hessian=likelihood_hessian,\
@@ -157,14 +208,14 @@ class power_law_nhpp(poisson_process):
         if kind.lower() == "time":
             u = np.log(t)
             fun = lambda x: 1/x[1] * (np.log(M)-np.log(x[0]))
-            g = ndt.Gradient(fun)(p)
+            g = ndt.Gradient(fun,method='complex')(p)
             w = c*np.sqrt( np.sum(g@p_cov*g,axis=1) )
             ML,MU = self.cumulative_intensity(np.exp(u+w)),self.cumulative_intensity(np.exp(u-w))
 
         elif kind.lower() == "mcf":
             u = np.log(M)
             fun = lambda x: x[1]*np.log(t)+np.log(x[0])
-            g = ndt.Gradient(fun)(p)
+            g = ndt.Gradient(fun,method='complex')(p)
             w = c*np.sqrt( np.sum(g@p_cov*g,axis=1) )
             ML,MU = np.exp(u-w),np.exp(u+w)
         
