@@ -2,7 +2,6 @@ import numpy as np
 import scipy.stats as sps
 from ReliabilityAnalysis.utilities import _ensure_list
 from scipy.optimize import minimize, fsolve
-import numdifftools as ndt
 
 class weiner:
     def __init__(self,mu=None,sigma=None):
@@ -53,7 +52,7 @@ class weiner:
             
         return -nloglike
 
-    def estimate_parameters(self,t,x,x0=None):
+    def estimate_parameters(self,t,x,x0=None,inplace=False,use_numdifftools=False):
         
         # error checking
         t = _ensure_list(t)
@@ -70,31 +69,49 @@ class weiner:
             dx = np.array(flat_deltas(x))
             mu_guess = np.mean(dx/dt)
             sig_guess = np.mean( (dx-mu_guess)**2/dt )
-            x0 = [np.mean(dx/dt),np.log(sig_guess)]
+            y0 = [np.mean(dx/dt),np.log(sig_guess)]
+        else:
+            y0 = [x0[0],np.log(x0[1])]
 
         # MLE
         obj = lambda z: self.nnlf(t,x,z[0],z[1])
-        res = minimize(obj,x0,method='BFGS')
-        self.mu = res.x[0]
-        self.sigma = np.exp(res.x[1])
-        H = ndt.Hessian(obj)(res.x)
-        Hi = np.linalg.inv(H)
+        res = minimize(obj,y0,method='BFGS')
+        mu = res.x[0]
+        sigma = np.exp(res.x[1])
+
+        if use_numdifftools:
+            print("Using numdifftools to approximate hessian")
+            import numdifftools as ndt
+            H = ndt.Hessian(obj,method='complex')(res.x)
+            Hi = np.linalg.inv(H)
+        else:
+            print("Using hessian inverse approximation from scipy.minimize")
+            Hi = res.hess_inv
 
         # estimate parameter covariance. See Reparameterization at https://en.wikipedia.org/wiki/Fisher_information 
         J = np.array([     [1,0], 
                             [0,np.exp(res.x[1])] 
                         ])
         p_cov = J.T @ Hi @ J.T
-        p_sigma = np.sqrt(np.diag(p_cov))
-        muL = self.mu - 1.96*p_sigma[0]
-        muU = self.mu + 1.96*p_sigma[0]
-        sL = self.sigma - 1.96*p_sigma[1]
-        sU = self.sigma + 1.96*p_sigma[1]
-        print(f"mu={self.mu:.2e} [{muL:.2e},{muU:.2e}]")
-        print(f"sigma={self.sigma:.2e} [{sL:.2e},{sU:.2e}]")
+    
+        if inplace is True:
+            self.mu = mu 
+            self.sigma = sigma
+            self.parameter_source = "estimated"
+            self.parameter_covariance = p_cov
 
-        self.parameter_source = "estimated"
-        self.parameter_covariance = p_cov
+            p_sigma = np.sqrt(np.diag(p_cov))
+            muL = mu - 1.96*p_sigma[0]
+            muU = mu + 1.96*p_sigma[0]
+            sL = sigma - 1.96*p_sigma[1]
+            sU = sigma + 1.96*p_sigma[1]
+
+            print("Parameters updated: ")
+            print(f"\t mu={self.mu:.2e} [{muL:.2e},{muU:.2e}]")
+            print(f"\t sigma={self.sigma:.2e} [{sL:.2e},{sU:.2e}]")
+        else:
+            return mu,sigma,p_cov          
+        
 
 class RBM(weiner):
     def __init__(self,mu,sigma):
@@ -149,6 +166,33 @@ class RBM(weiner):
             F = 1 - sps.norm.cdf((-x+m)/s) 
             F -= np.exp(2*mu*x/sigma**2)*sps.norm.cdf( (-x-m)/s )
             return F
+
+    def estimate_parameters(self,t,x,x0=None,inplace=False,use_numdifftools=False):
+        mu,sigma,p_cov = super().estimate_parameters(t,x,x0=x0,inplace=False,use_numdifftools=use_numdifftools)
+
+        p_sigma = np.sqrt(np.diag(p_cov))
+        muL = mu - 1.96*p_sigma[0]
+        muU = mu + 1.96*p_sigma[0]
+        sL = sigma - 1.96*p_sigma[1]
+        sU = sigma + 1.96*p_sigma[1]
+
+        if inplace is True:
+            self.mu = mu 
+            self.sigma = sigma
+            self.parameter_source = "estimated"
+            self.parameter_covariance = p_cov
+
+            p_sigma = np.sqrt(np.diag(p_cov))
+            muL = mu - 1.96*p_sigma[0]
+            muU = mu + 1.96*p_sigma[0]
+            sL = sigma - 1.96*p_sigma[1]
+            sU = sigma + 1.96*p_sigma[1]
+
+            print("Parameters updated: ")
+            print(f"\t mu={self.mu:.2e} [{muL:.2e},{muU:.2e}]")
+            print(f"\t sigma={self.sigma:.2e} [{sL:.2e},{sU:.2e}]")
+        else:
+            return mu,sigma,p_cov 
 
     def get_upper_lower(self,t,x0,alpha=0.025):
 
