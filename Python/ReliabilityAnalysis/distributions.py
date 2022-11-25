@@ -25,24 +25,24 @@ class reliability_distribution(stats.rv_continuous):
     def conditional_reliability(self,tau,t0):
         return np.exp(self.log_reliability(t0+tau) - self.log_reliability(t0))
     
-    def fit(self,ti,p0,observed="all"): # Overwriting scipy.stats fitting because it seems that it doesn't handle censoring
+    def fit(self,ti,p0,observed="all",ndt_kwds={}): # Overwriting scipy.stats fitting because it seems that it doesn't handle censoring
         y0 = self.transform_scale(p0,direction="forward")
         obj = lambda x: self.nnlf(self.transform_scale(x),ti,observed)
         result = opt.minimize(obj,y0)
         y_hat = result.x
-        H = ndt.Hessian(obj)(y_hat)
+        H = ndt.Hessian(obj,**ndt_kwds)(y_hat)
         p_hat,p_cov = self.transform_scale(y_hat,likelihood_hessian=H,direction="inverse")
         s = np.sqrt(np.diag(p_cov))
         p_ci = p_hat + 1.96*np.array([-s,s])
         
         return p_hat, p_ci.transpose(), p_cov
     
-    def fit_interval(self,ti,ins,p0,observed="all",bnds=None): # Overwriting scipy.stats fitting because it seems that it doesn't handle censoring
+    def fit_interval(self,ti,ins,p0,observed="all",bnds=None,ndt_kwds={}): # Overwriting scipy.stats fitting because it seems that it doesn't handle censoring
         y0 = self.transform_scale(p0,direction="forward")
         obj = lambda x: self.nnlf_interval(self.transform_scale(x),ti,ins,observed)
         result = opt.minimize(obj,y0)
         y_hat = result.x
-        H = ndt.Hessian(obj)(y_hat)
+        H = ndt.Hessian(obj,**ndt_kwds)(y_hat)
         p_hat,p_cov = self.transform_scale(y_hat,likelihood_hessian=H,direction="inverse")
         s = np.sqrt(np.diag(p_cov))
         p_ci = p_hat + 1.96*np.array([-s,s]) 

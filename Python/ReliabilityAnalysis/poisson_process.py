@@ -64,12 +64,12 @@ class poisson_process:
         self.parameters = original_parameters
         return -like
 
-    def fit(self,event_times,p0,truncation_times=None): # Overwriting scipy.stats fitting because it seems that it doesn't handle censoring
+    def fit(self,event_times,p0,truncation_times=None,ndt_kwds={}): # Overwriting scipy.stats fitting because it seems that it doesn't handle censoring
         y0 = self.transform_scale(p0,direction="forward")
         obj = lambda x: self.nnlf(self.transform_scale(x),event_times,truncation_times=truncation_times)
         result = opt.minimize(obj,y0)
         y_hat = result.x
-        H = ndt.Hessian(obj,method='complex')(y_hat)
+        H = ndt.Hessian(obj,**ndt_kwds)(y_hat)
         p_hat,p_cov = self.transform_scale(y_hat,likelihood_hessian=H,direction="inverse")
         s = np.sqrt(np.diag(p_cov))
         p_ci = p_hat + 1.96*np.array([-s,s])
@@ -93,7 +93,7 @@ class power_law_nhpp(poisson_process):
         a,b = [*self.parameters]
         return np.log(a)+np.log(b)+(b-1)*np.log(t)
     
-    def fit(self,event_times,truncation_times=None):
+    def fit(self,event_times,truncation_times=None,ndt_kwds={}):
 
         # event_times must be a list of lists
 
@@ -126,7 +126,7 @@ class power_law_nhpp(poisson_process):
         # lazy numerical computation of the Hessian and parameter CIs
         y_hat = self.transform_scale(p_hat,direction='forward')
         obj = lambda x: self.nnlf(self.transform_scale(x),event_times,truncation_times=truncation_times)
-        H = ndt.Hessian(obj,method='complex')(y_hat)
+        H = ndt.Hessian(obj,**ndt_kwds)(y_hat)
         _,p_cov = self.transform_scale(y_hat,likelihood_hessian=H,direction="inverse")
         s = np.sqrt(np.diag(p_cov))
         p_ci = p_hat + 1.96*np.array([-s,s])
@@ -166,14 +166,14 @@ class power_law_nhpp(poisson_process):
 
         return -loglike
     
-    def fit_interval(self,ni,ins,p0,cumulative=False,estimate_ci=False): # Overwriting scipy.stats fitting because it seems that it doesn't handle censoring
+    def fit_interval(self,ni,ins,p0,cumulative=False,estimate_ci=False,ndt_kwds={}): # Overwriting scipy.stats fitting because it seems that it doesn't handle censoring
         y0 = self.transform_scale(p0,direction="forward")
         obj = lambda x: self.nnlf_interval(self.transform_scale(x),ni,ins,cumulative=cumulative)
         result = opt.minimize(obj,y0)
         y_hat = result.x
         
         if estimate_ci:
-            H = ndt.Hessian(obj)(y_hat)
+            H = ndt.Hessian(obj,**ndt_kwds)(y_hat)
             p_hat,p_cov = self.transform_scale(y_hat,likelihood_hessian=H,direction="inverse")
             s = np.sqrt(np.diag(p_cov))
             p_ci = p_hat + 1.96*np.array([-s,s]) 
@@ -189,7 +189,7 @@ class power_law_nhpp(poisson_process):
         return _parameter_transform_log(x,likelihood_hessian=likelihood_hessian,\
             direction=direction)
 
-    def mcf_confidence_interval(self,t,p_cov,kind="mcf",c=1.96):
+    def mcf_confidence_interval(self,t,p_cov,kind="mcf",c=1.96,ndt_kwds={}):
     
         assert kind.lower() in ["time",'mcf'],"kind must be ""time"" or ""mcf""."
         assert all([(t[ii+1]-t[ii])>=0 for ii in range(len(t)-1)]), "time vector must be sorted"
@@ -208,14 +208,14 @@ class power_law_nhpp(poisson_process):
         if kind.lower() == "time":
             u = np.log(t)
             fun = lambda x: 1/x[1] * (np.log(M)-np.log(x[0]))
-            g = ndt.Gradient(fun,method='complex')(p)
+            g = ndt.Gradient(fun,**ndt_kwds)(p)
             w = c*np.sqrt( np.sum(g@p_cov*g,axis=1) )
             ML,MU = self.cumulative_intensity(np.exp(u+w)),self.cumulative_intensity(np.exp(u-w))
 
         elif kind.lower() == "mcf":
             u = np.log(M)
             fun = lambda x: x[1]*np.log(t)+np.log(x[0])
-            g = ndt.Gradient(fun,method='complex')(p)
+            g = ndt.Gradient(fun,**ndt_kwds)(p)
             w = c*np.sqrt( np.sum(g@p_cov*g,axis=1) )
             ML,MU = np.exp(u-w),np.exp(u+w)
         

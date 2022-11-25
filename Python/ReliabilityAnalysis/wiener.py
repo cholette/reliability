@@ -52,7 +52,7 @@ class weiner:
             
         return -nloglike
 
-    def estimate_parameters(self,t,x,x0=None,inplace=False,use_numdifftools=False):
+    def estimate_parameters(self,t,x,x0=None,inplace=False,use_numdifftools=False,ndt_kwds={}):
         
         # error checking
         t = _ensure_list(t)
@@ -82,7 +82,7 @@ class weiner:
         if use_numdifftools:
             print("Using numdifftools to approximate hessian")
             import numdifftools as ndt
-            H = ndt.Hessian(obj,method='complex')(res.x)
+            H = ndt.Hessian(obj,**ndt_kwds)(res.x)
             Hi = np.linalg.inv(H)
         else:
             print("Using hessian inverse approximation from scipy.minimize")
