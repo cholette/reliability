@@ -31,11 +31,11 @@ def _parameter_transform_log(x,likelihood_hessian=None,direction="inverse"):
 
             if direction == "inverse":
                 Ji = np.linalg.inv(J)                            
-                z_cov = np.linalg.inv( Ji.transpose() @ likelihood_hessian @ Ji ) 
+                H = Ji.transpose() @ likelihood_hessian @ Ji 
             elif direction == "forward":
-                z_cov = np.linalg.inv( J.transpose() @ likelihood_hessian @ J ) 
+                H = J.transpose() @ likelihood_hessian @ J
 
-            return z,z_cov  
+            return z,H  
 
 def _parameter_transform_identity(x,likelihood_hessian=None,direction="inverse"):
         z = np.array(x)
@@ -44,6 +44,5 @@ def _parameter_transform_identity(x,likelihood_hessian=None,direction="inverse")
             # print("No valid Hessian supplied. Returning only parameter estimates")
             return z
         else:
-            J = np.eye((len(z),len(z)))
-            z_cov = np.linalg.inv( J.transpose() @ likelihood_hessian @ J ) 
-            return z,z_cov 
+            H = likelihood_hessian
+            return z,H 

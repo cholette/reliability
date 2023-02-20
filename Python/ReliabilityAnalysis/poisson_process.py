@@ -70,7 +70,8 @@ class poisson_process:
         result = opt.minimize(obj,y0)
         y_hat = result.x
         H = ndt.Hessian(obj,**ndt_kwds)(y_hat)
-        p_hat,p_cov = self.transform_scale(y_hat,likelihood_hessian=H,direction="inverse")
+        p_hat,Ht = self.transform_scale(y_hat,likelihood_hessian=H,direction="inverse")
+        p_cov = np.linalg.inv(Ht)
         s = np.sqrt(np.diag(p_cov))
         p_ci = p_hat + 1.96*np.array([-s,s])
 
@@ -127,7 +128,8 @@ class power_law_nhpp(poisson_process):
         y_hat = self.transform_scale(p_hat,direction='forward')
         obj = lambda x: self.nnlf(self.transform_scale(x),event_times,truncation_times=truncation_times)
         H = ndt.Hessian(obj,**ndt_kwds)(y_hat)
-        _,p_cov = self.transform_scale(y_hat,likelihood_hessian=H,direction="inverse")
+        _,Ht = self.transform_scale(y_hat,likelihood_hessian=H,direction="inverse")
+        p_cov = np.linalg.inv(Ht)
         s = np.sqrt(np.diag(p_cov))
         p_ci = p_hat + 1.96*np.array([-s,s])
 
@@ -174,7 +176,8 @@ class power_law_nhpp(poisson_process):
         
         if estimate_ci:
             H = ndt.Hessian(obj,**ndt_kwds)(y_hat)
-            p_hat,p_cov = self.transform_scale(y_hat,likelihood_hessian=H,direction="inverse")
+            p_hat,Ht = self.transform_scale(y_hat,likelihood_hessian=H,direction="inverse")
+            p_cov = np.linalg.inv(Ht)
             s = np.sqrt(np.diag(p_cov))
             p_ci = p_hat + 1.96*np.array([-s,s]) 
         else:

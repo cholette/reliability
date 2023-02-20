@@ -31,7 +31,8 @@ class reliability_distribution(stats.rv_continuous):
         result = opt.minimize(obj,y0)
         y_hat = result.x
         H = ndt.Hessian(obj,**ndt_kwds)(y_hat)
-        p_hat,p_cov = self.transform_scale(y_hat,likelihood_hessian=H,direction="inverse")
+        p_hat,Ht = self.transform_scale(y_hat,likelihood_hessian=H,direction="inverse")
+        p_cov = np.linalg.inv(Ht)
         s = np.sqrt(np.diag(p_cov))
         p_ci = p_hat + 1.96*np.array([-s,s])
         
@@ -43,7 +44,8 @@ class reliability_distribution(stats.rv_continuous):
         result = opt.minimize(obj,y0)
         y_hat = result.x
         H = ndt.Hessian(obj,**ndt_kwds)(y_hat)
-        p_hat,p_cov = self.transform_scale(y_hat,likelihood_hessian=H,direction="inverse")
+        p_hat,Ht = self.transform_scale(y_hat,likelihood_hessian=H,direction="inverse")
+        p_cov = np.linalg.inv(Ht)
         s = np.sqrt(np.diag(p_cov))
         p_ci = p_hat + 1.96*np.array([-s,s]) 
 
