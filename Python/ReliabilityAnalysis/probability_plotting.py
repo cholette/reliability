@@ -48,6 +48,8 @@ def kaplan_meier(ti,observed,plot=True,confidence_interval="greenwood"):
     
     # obtain unique time points
     uti,idxu = np.unique(ti,return_index=True)
+    obsu = observed[idxu] 
+    uti = uti[obsu==1] # remove censored samples from the unique times
 
     N = len(ti)
     Nu = len(uti) 
@@ -225,7 +227,7 @@ def weibull_reliability_confidence_interval(dist,t,p_cov,kind="Reliability",c=1.
             prependNaN = False
 
         # The below is a bit lazy and uses numerical gradients. Might use analytical gradients later.
-        a,b = dist.kwds['scale'],dist.args[0]
+        a,b = dist.kwds['scale'],dist.kwds['beta']
         p = np.array([a,b])
         R = dist.reliability(t)
         if kind.lower() == "time":
