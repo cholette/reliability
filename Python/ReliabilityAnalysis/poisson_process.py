@@ -9,7 +9,19 @@ class poisson_process:
     def __init__(self,intensity_function,parameters):
         self.parameters = parameters
         self.intensity = intensity_function
-    
+
+    def random_counts(self,t,s=0,size=1):
+        if s != min(t):
+            t = np.insert(t,0,s)
+
+        dN = np.zeros((size,len(t)))
+        for ii,tii in enumerate(t):
+            if ii > 0:
+                M = self.cumulative_intensity(t[ii],t0=t[ii-1])
+                dN[:,ii] = stats.poisson.rvs(M,size=size)
+        
+        return np.cumsum(dN,axis=1)
+
     def cumulative_intensity(self,t1,t0=0):
         intensity = lambda t: self.intensity(t,*self.parameters)
         LAMBDA = [0]*len(t1)
@@ -64,17 +76,25 @@ class poisson_process:
         self.parameters = original_parameters
         return -like
 
-    def fit(self,event_times,p0,truncation_times=None,ndt_kwds={}): # Overwriting scipy.stats fitting because it seems that it doesn't handle censoring
+    def fit(self,event_times,p0,truncation_times=None,ndt_kwds={}):
+
+        msg = "event_times must be a list of lists or a 2D numpy array"
+        if isinstance(event_times,list):
+            assert all([isinstance(event_times[m],list) for m in range(len(event_times))]),msg
+        elif isinstance(event_times,np.ndarray):
+            event_times = [event_times[m,:] for m in range(event_times.shape[0])]
+
         y0 = self.transform_scale(p0,direction="forward")
         obj = lambda x: self.nnlf(self.transform_scale(x),event_times,truncation_times=truncation_times)
         result = opt.minimize(obj,y0)
         y_hat = result.x
         H = ndt.Hessian(obj,**ndt_kwds)(y_hat)
         p_hat,Ht = self.transform_scale(y_hat,likelihood_hessian=H,direction="inverse")
-        p_cov = np.linalg.inv(Ht)
-        s = np.sqrt(np.diag(p_cov))
-        p_ci = p_hat + 1.96*np.array([-s,s])
+        log_p_cov = np.linalg.inv(H)
+        s = np.sqrt(np.diag(log_p_cov))
+        p_ci =  np.exp(y_hat +1.96*np.array([-s,s]))
 
+        p_cov = np.linalg.inv(Ht)
         return p_hat, p_ci.transpose(),p_cov
 
     def transform_scale(self,x,likelihood_hessian=None,direction="inverse"):
@@ -86,6 +106,28 @@ class power_law_nhpp(poisson_process):
         fun = lambda t: a*b*t**(b-1)
         super().__init__(fun,parameters=[a,b])
     
+    def random_arrival_times(self,T,t0=0,size=1):
+
+        msg = "Suspension times must be either an int>0 or a list of len == size"
+        if isinstance(T,int):
+            T = [T]*size
+        else:
+            assert isinstance(T,list), msg
+            assert len(T) == size, msg
+
+        t = [ [] for m in range(size)]
+        a,b = [*self.parameters]
+        for m in range(size):
+            t_next = t0*1.0
+            while t_next < T[m]:
+                t_last = t_next*1.0
+                t[m].append(t_last)
+                U = np.random.rand()
+                t_next = (-np.log(1-U)/a + t_last**b)**(1/b)
+        
+        t = [t[m][1::] for m in range(size)]
+        return t
+
     def cumulative_intensity(self, t1, t0=0):
         a,b = [*self.parameters]
         return a*(t1**b-t0**b)
@@ -96,7 +138,12 @@ class power_law_nhpp(poisson_process):
     
     def fit(self,event_times,truncation_times=None,ndt_kwds={}):
 
-        # event_times must be a list of lists
+        msg = "event_times must be a list of lists or a 2D numpy array"
+        if isinstance(event_times,list):
+            assert all([isinstance(event_times[m],list) for m in range(len(event_times))]),msg
+        elif isinstance(event_times,np.ndarray):
+            event_times = [event_times[m,:] for m in range(event_times.shape[0])]
+
 
         # check for valid truncation time
         tau = []
@@ -106,7 +153,8 @@ class power_law_nhpp(poisson_process):
                     assert truncation_times[m] > max(event_times[m]), "Invalid truncation time for asset "+str(m)
                 tau.append(truncation_times[m])
         else:
-            tau.append(max(event_times[m]))
+            for m,_ in enumerate(event_times):
+                tau.append(max(event_times[m]))
         
         # analytical computation of MLE for observed failure times
         num_failures = 0
@@ -127,13 +175,13 @@ class power_law_nhpp(poisson_process):
         # lazy numerical computation of the Hessian and parameter CIs
         y_hat = self.transform_scale(p_hat,direction='forward')
         obj = lambda x: self.nnlf(self.transform_scale(x),event_times,truncation_times=truncation_times)
-        H = ndt.Hessian(obj,**ndt_kwds)(y_hat)
-        _,Ht = self.transform_scale(y_hat,likelihood_hessian=H,direction="inverse")
-        p_cov = np.linalg.inv(Ht)
-        s = np.sqrt(np.diag(p_cov))
-        p_ci = p_hat + 1.96*np.array([-s,s])
+        H_log = ndt.Hessian(obj,**ndt_kwds)(y_hat)
+        log_p_cov = np.linalg.inv(H_log)
+        s = np.sqrt(np.diag(log_p_cov))
+        p_ci = np.exp(y_hat + 1.96*np.array([-s,s]))
+        _,H = self.transform_scale(y_hat,likelihood_hessian=H_log)
 
-        return p_hat,p_ci.transpose(),p_cov
+        return p_hat, p_ci.transpose(),np.linalg.inv(H)
     
     def nnlf_interval(self,p,ni,ins,cumulative=False):
         
@@ -177,15 +225,16 @@ class power_law_nhpp(poisson_process):
         if estimate_ci:
             H = ndt.Hessian(obj,**ndt_kwds)(y_hat)
             p_hat,Ht = self.transform_scale(y_hat,likelihood_hessian=H,direction="inverse")
+            log_p_cov = np.linalg.inv(H)
+            s = np.sqrt(np.diag(log_p_cov))
+            p_ci = np.exp(p_hat + 1.96*np.array([-s,s]))
             p_cov = np.linalg.inv(Ht)
-            s = np.sqrt(np.diag(p_cov))
-            p_ci = p_hat + 1.96*np.array([-s,s]) 
         else:
             p_hat = self.transform_scale(y_hat,likelihood_hessian=None,direction="inverse")
             n = p_hat.shape[0]
             p_ci = np.nan*np.ones((n,2))
-            p_cov = np.nan*np.ones((n,n))
-        
+            p_cov = np.nan*np.ones((2,2))
+
         return p_hat, p_ci.transpose(),p_cov
 
     def transform_scale(self,x,likelihood_hessian=None,direction="inverse"):
@@ -204,7 +253,9 @@ class power_law_nhpp(poisson_process):
         else:
             prependNaN = False
 
-        # The below is a bit lazy and uses numerical gradients. Might use analytical gradients later.
+        #Confidence intervals using the Delta Method on the log(M(t)) and then 
+        # transforming back. 
+        #  The below is a bit lazy and uses numerical gradients. Might use analytical gradients later.
         a,b = self.parameters
         p = np.array([a,b])
         M = self.cumulative_intensity(t)

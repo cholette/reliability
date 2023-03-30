@@ -60,6 +60,10 @@ class reliability_distribution(stats.rv_continuous):
             direction=direction)
 
 class reliability_distribution_frozen(stats._distn_infrastructure.rv_frozen):
+    def __init__(self, dist, *args, **kwds):
+        self.args = args
+        self.kwds = kwds
+        self.dist = dist
     def reliability(self,x):
         return self.dist.sf(x,*self.args, **self.kwds)
     def log_reliability(self,x):

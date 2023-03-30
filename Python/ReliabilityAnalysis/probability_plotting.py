@@ -227,7 +227,7 @@ def weibull_reliability_confidence_interval(dist,t,p_cov,kind="Reliability",c=1.
             prependNaN = False
 
         # The below is a bit lazy and uses numerical gradients. Might use analytical gradients later.
-        a,b = dist.kwds['scale'],dist.kwds['beta']
+        a,b = dist.kwds['scale'],dist.args[0]
         p = np.array([a,b])
         R = dist.reliability(t)
         if kind.lower() == "time":
