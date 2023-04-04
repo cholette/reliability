@@ -130,6 +130,8 @@ def empirical_mean_cumulative_function(event_times,suspension_times,plot=True,co
         print('Warning: Confidence intervals cannot be estimated for a single asset')
         M_UCL = np.nan*np.ones(M_hat.shape)
         M_LCL = M_UCL
+    elif confidence_interval is None:
+        print('Skipping confidence interval ... ')
     else:
         V_hat = np.sum( np.cumsum( d/d.sum(axis=0)*(n-m_hat),axis=1)**2, axis=0)
         se_hat = np.sqrt(V_hat)
@@ -150,7 +152,8 @@ def empirical_mean_cumulative_function(event_times,suspension_times,plot=True,co
     if plot:
         fig, ax = plt.subplots()
         ax.step(t,M_hat,where="post",label=r"$\hat{M}(t)$",linewidth=2,color="blue")
-        ax.fill_between(t[1::],M_LCL,y2=M_UCL,linestyle='--',linewidth=2,color="blue",step="post",label="95% CI",alpha=0.1)
+        if confidence_interval is not None:
+            ax.fill_between(t[1::],M_LCL,y2=M_UCL,linestyle='--',linewidth=2,color="blue",step="post",label="95% CI",alpha=0.1)
         ax.set_xlabel("Time")
         ax.set_ylabel(r"$\hat{M}(t)$") 
         ax.set_ylim((0,ax.get_ylim()[1]))

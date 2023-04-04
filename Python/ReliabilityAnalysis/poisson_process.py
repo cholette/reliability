@@ -6,9 +6,11 @@ import numdifftools as ndt
 from ReliabilityAnalysis.utilities import _parameter_transform_log
 
 class poisson_process:
-    def __init__(self,intensity_function,parameters):
+    def __init__(self,parameters):
         self.parameters = parameters
-        self.intensity = intensity_function
+    
+    def intensity(self,t):
+        return "Intensity needs to be defined via subclassing."
 
     def random_counts(self,t,s=0,size=1):
         if s != min(t):
@@ -23,7 +25,6 @@ class poisson_process:
         return np.cumsum(dN,axis=1)
 
     def cumulative_intensity(self,t1,t0=0):
-        intensity = lambda t: self.intensity(t,*self.parameters)
         LAMBDA = [0]*len(t1)
         for ii,_ in enumerate(t1):
             if len(list(t0))==1:
@@ -32,20 +33,19 @@ class poisson_process:
                 raise ValueError("t0 must be an integer or a list of the same length as t1")
             else:
                 t0ii = t0[ii]
-            LAMBDA[ii] = quad(intensity,t0ii,t1[ii])[0]
+            LAMBDA[ii] = quad(self.intensity,t0ii,t1[ii])[0]
         
         return LAMBDA
     
     def log_intensity(self,t):
-        return np.log(self.intensity(t,*self.parameters))
+        return np.log(self.intensity(t))
 
     def reliability(self,t,w):
         return np.exp(-self.cumulative_intensity(w,t0=t))
     
     def pdf(self,t,t_previous=0):
         w = t-t_previous
-        return self.intensity(t,self.parameters)*\
-            self.reliability(w,t0=t_previous)
+        return self.intensity(t)*self.reliability(w,t0=t_previous)
     
     def nnlf(self,p,event_times,truncation_times=None):
         # event_times[asset][failure time index], truncation_time=None means that last index is a failure.
@@ -78,7 +78,7 @@ class poisson_process:
 
     def fit(self,event_times,p0,truncation_times=None,ndt_kwds={}):
 
-        msg = "event_times must be a list of lists or a 2D numpy array"
+        msg = "event_times must be a list of lists or a 2D numpy arrays"
         if isinstance(event_times,list):
             assert all([isinstance(event_times[m],list) for m in range(len(event_times))]),msg
         elif isinstance(event_times,np.ndarray):
@@ -103,8 +103,11 @@ class poisson_process:
 
 class power_law_nhpp(poisson_process):
     def __init__(self,a,b):
-        fun = lambda t: a*b*t**(b-1)
-        super().__init__(fun,parameters=[a,b])
+        self.parameters = [a,b]
+    
+    def intesity(self,t):
+        a,b = self.parameters
+        return a*b*t**(b-1)
     
     def random_arrival_times(self,T,t0=0,size=1):
 
@@ -195,8 +198,6 @@ class power_law_nhpp(poisson_process):
         
         original_parameters = self.parameters
         self.parameters = p
-        alpha = p[0]
-        beta = p[1]
         
         loglike = 0
         for m in range(len(ni)):
